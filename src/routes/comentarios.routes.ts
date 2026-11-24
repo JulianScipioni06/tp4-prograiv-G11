@@ -1,5 +1,6 @@
 import express from 'express';
 import * as comentarios from '../services/comentarios.service';
+import { texto, entero, enteroRuta } from '../validacion';
 import { validarCsrf } from '../middleware/csrf';
 
 const router = express.Router();
@@ -7,9 +8,8 @@ router.use(validarCsrf);
 
 /**
  * GET /api/comentarios — reseñas públicas de la cafetería.
- * El sitio las pinta con innerHTML: por eso son un vector de XSS almacenado.
  */
-router.get('/', async (req, res, next) => {
+router.get('/', async (_req, res, next) => {
   try {
     res.json({ comentarios: await comentarios.listar() });
   } catch (err) {
@@ -18,18 +18,19 @@ router.get('/', async (req, res, next) => {
 });
 
 /**
- * POST /api/comentarios
- *
- * FALLAS: sin token anti-CSRF, sin validación de longitud/rango y sin
- * sanitización (XSS almacenado).
+ * POST /api/comentarios — crea una reseña validando longitud y rango (VUL-11).
  */
 router.post('/', async (req, res, next) => {
   try {
-    const { autor, texto, calificacion } = req.body || {};
+    const body = req.body || {};
+    const autorValido = texto(body.autor, 2, 40, 'autor');
+    const textoValido = texto(body.texto, 3, 280, 'texto');
+    const calificacionValida = entero(body.calificacion, 1, 5, 'calificacion');
+
     const comentario = await comentarios.crear({
-      autor,
-      texto,
-      calificacion,
+      autor: autorValido,
+      texto: textoValido,
+      calificacion: calificacionValida,
     });
     res.status(201).json(comentario);
   } catch (err) {
@@ -40,8 +41,8 @@ router.post('/', async (req, res, next) => {
 /** DELETE /api/comentarios/:id */
 router.delete('/:id', async (req, res, next) => {
   try {
-    // FALLA: sin verificación de rol — cualquiera puede borrar reseñas.
-    const comentario = await comentarios.eliminar(req.params.id);
+    const idValido = enteroRuta(req.params.id, 1, 1000000, 'id');
+    const comentario = await comentarios.eliminar(idValido);
     if (!comentario) {
       return res.status(404).json({ error: 'Comentario no encontrado.' });
     }
