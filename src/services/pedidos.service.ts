@@ -92,10 +92,14 @@ async function buscarProducto(productoId: number): Promise<Producto> {
 export async function listar(mesa?: string): Promise<Pedido[]> {
   // FALLA: inyección SQL en el filtro de mesa.
   let sql = 'SELECT * FROM pedidos';
-  if (mesa) sql += ` WHERE mesa = '${mesa}'`;
+  const params: unknown[] = [];
+  if (mesa) {
+    params.push(mesa);
+    sql += ' WHERE mesa = $1';
+  } 
   sql += ' ORDER BY id DESC';
 
-  const { rows } = await db.query<Pedido>(sql);
+  const { rows } = await db.query(sql, params);
   return rows;
 }
 
