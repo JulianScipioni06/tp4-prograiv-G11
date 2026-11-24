@@ -1,12 +1,13 @@
 import express from 'express';
 import * as comentarios from '../services/comentarios.service';
 import { texto, entero, enteroRuta } from '../validacion';
+import { validarCsrf } from '../middleware/csrf';
 
 const router = express.Router();
+router.use(validarCsrf);
 
 /**
  * GET /api/comentarios — reseñas públicas de la cafetería.
- * El sitio las pinta con innerHTML: por eso son un vector de XSS almacenado.
  */
 router.get('/', async (_req, res, next) => {
   try {
