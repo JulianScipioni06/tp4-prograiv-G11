@@ -15,7 +15,7 @@ import type { NextFunction, Request, Response } from 'express';
 import type { ErrorHttp } from '../tipos';
 
 export function rutaNoEncontrada(req: Request, res: Response): void {
-  res.status(404).json({ error: `Ruta no encontrada: ${req.originalUrl}` });
+  res.status(404).json({ error: 'Ruta no encontrada.' });
 }
 
 // Express reconoce al manejador de errores por sus CUATRO parámetros: `next`

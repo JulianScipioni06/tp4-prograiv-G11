@@ -8,8 +8,10 @@ import * as catalogo from '../services/catalogo.service';
 import * as usuarios from '../services/usuarios.service';
 import { requiereSesion, requiereRol } from '../middleware/auth';
 import type { Usuario } from '../tipos';
+import { validarCsrf } from '../middleware/csrf';
 
 const router = express.Router();
+router.use(validarCsrf);
 
 /**
  * Rutas del panel de administración.

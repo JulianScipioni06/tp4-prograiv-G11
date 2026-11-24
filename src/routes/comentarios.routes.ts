@@ -1,7 +1,9 @@
 import express from 'express';
 import * as comentarios from '../services/comentarios.service';
+import { validarCsrf } from '../middleware/csrf';
 
 const router = express.Router();
+router.use(validarCsrf);
 
 /**
  * GET /api/comentarios — reseñas públicas de la cafetería.

@@ -1,7 +1,9 @@
 import express from 'express';
 import * as pedidos from '../services/pedidos.service';
+import { validarCsrf } from '../middleware/csrf';
 
 const router = express.Router();
+router.use(validarCsrf);
 
 /**
  * POST /api/pedidos
