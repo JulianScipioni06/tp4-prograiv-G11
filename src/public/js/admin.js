@@ -7,6 +7,7 @@
   var API = '/api';
   var usuario = null;
   var productosCache = {};
+  var csrfToken = null;
 
   function $(sel) { return document.querySelector(sel); }
   function $$(sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); }
@@ -15,15 +16,11 @@
     return Number(valor || 0).toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
   }
 
-  function raw(valor) {
-    // FALLA: no escapa nada. Usar escaparHtml() / textContent.
-    return String(valor == null ? '' : valor);
-  }
-
-  function escaparHtml(texto) {
-    var div = document.createElement('div');
-    div.textContent = texto == null ? '' : String(texto);
-    return div.innerHTML;
+  function crearEl(tag, clase, texto) {
+    var el = document.createElement(tag);
+    if (clase) el.className = clase;
+    if (texto !== undefined && texto !== null) el.textContent = String(texto);
+    return el;
   }
 
   function api(url, opciones) {
@@ -34,33 +31,61 @@
     });
   }
 
-  function postJSON(url, cuerpo) {
-    return api(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
+  function obtenerCsrf() {
+    if (csrfToken) return Promise.resolve(csrfToken);
+    return api('/csrf-token').then(function (resp) {
+      if (resp.ok && resp.data && resp.data.token) {
+        csrfToken = resp.data.token;
+      }
+      return csrfToken;
     });
   }
 
-  function putJSON(url, cuerpo) {
-    return api(url, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
+  function enviarConCsrf(metodo, url, cuerpo) {
+    return obtenerCsrf().then(function (token) {
+      var headers = { 'Content-Type': 'application/json' };
+      if (token) headers['X-CSRF-Token'] = token;
+      var opciones = { method: metodo, headers: headers };
+      if (cuerpo !== undefined) opciones.body = JSON.stringify(cuerpo || {});
+      return api(url, opciones);
     });
   }
 
-  function patchJSON(url, cuerpo) {
-    return api(url, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
-    });
-  }
+  function postJSON(url, cuerpo) { return enviarConCsrf('POST', url, cuerpo); }
+  function putJSON(url, cuerpo) { return enviarConCsrf('PUT', url, cuerpo); }
+  function patchJSON(url, cuerpo) { return enviarConCsrf('PATCH', url, cuerpo); }
+  function deleteJSON(url) { return enviarConCsrf('DELETE', url); }
 
   function feedback(el, mensaje, ok) {
     el.className = 'form-feedback ' + (ok ? 'is-ok' : 'is-error');
-    el.innerHTML = mensaje;
+    el.textContent = mensaje;
+  }
+
+  function renderKpis(contenedor, kpis) {
+    contenedor.replaceChildren();
+    kpis.forEach(function (k) {
+      var card = crearEl('div', 'kpi');
+      card.appendChild(crearEl('div', 'kpi-label', k.label));
+      card.appendChild(crearEl('div', 'kpi-value', k.value));
+      contenedor.appendChild(card);
+    });
+  }
+
+  function construirTabla(columnas, filas) {
+    var frag = document.createDocumentFragment();
+    var thead = document.createElement('thead');
+    var trHead = document.createElement('tr');
+    columnas.forEach(function (col) {
+      var th = crearEl('th', col.clase || null, col.texto);
+      trHead.appendChild(th);
+    });
+    thead.appendChild(trHead);
+    frag.appendChild(thead);
+
+    var tbody = document.createElement('tbody');
+    filas.forEach(function (tr) { tbody.appendChild(tr); });
+    frag.appendChild(tbody);
+    return frag;
   }
 
   /* ------------------------------------------------------------------ login */
@@ -74,8 +99,6 @@
       password: $('#login-password').value,
     }).then(function (resp) {
       if (!resp.ok) {
-        // FALLA (XSS reflejado): el mensaje del servidor (que incluye el
-        // usuario enviado) se pinta con innerHTML.
         feedback(caja, 'No pudimos iniciar sesión: ' + (resp.data.error || 'error desconocido'), false);
         return;
       }
@@ -89,15 +112,21 @@
       usuario = null;
       $('#vista-login').hidden = false;
       $('#vista-panel').hidden = true;
-      $('#admin-user').innerHTML = '';
+      $('#admin-user').textContent = '';
     });
   }
 
   function mostrarPanel() {
     $('#vista-login').hidden = true;
     $('#vista-panel').hidden = false;
-    $('#admin-user').innerHTML =
-      'Sesión de <strong>' + raw(usuario.nombre) + '</strong> · rol: <strong>' + raw(usuario.rol) + '</strong>';
+
+    var adminUser = $('#admin-user');
+    adminUser.replaceChildren();
+    adminUser.appendChild(document.createTextNode('Sesión de '));
+    adminUser.appendChild(crearEl('strong', null, usuario.nombre));
+    adminUser.appendChild(document.createTextNode(' · rol: '));
+    adminUser.appendChild(crearEl('strong', null, usuario.rol));
+
     $('#panel-bienvenida').textContent = 'Hola, ' + usuario.nombre;
     cargarTodo();
   }
@@ -121,7 +150,7 @@
             { label: 'Pedidos registrados', value: f.data.pedidos },
             {
               label: 'Producto más vendido',
-              value: mas ? raw(mas.nombre) : '—',
+              value: mas ? mas.nombre : '—',
             },
             {
               label: 'Unidades por tipo',
@@ -131,48 +160,67 @@
             },
           ];
 
-          $('#kpis').innerHTML = kpis.map(function (k) {
-            return '<div class="kpi"><div class="kpi-label">' + raw(k.label) + '</div>' +
-              '<div class="kpi-value">' + raw(k.value) + '</div></div>';
-          }).join('');
+          renderKpis($('#kpis'), kpis);
         });
       });
     });
   }
 
   /* --------------------------------------------------------------- pedidos */
-  function tablaPedidos(filas, conAcciones) {
-    if (!filas || filas.length === 0) return '<p class="empty">No hay pedidos.</p>';
+  function renderTablaPedidos(tabla, filas, conAcciones) {
+    tabla.replaceChildren();
+    if (!filas || filas.length === 0) {
+      tabla.appendChild(crearEl('p', 'empty', 'No hay pedidos.'));
+      return;
+    }
 
-    var html = '<thead><tr><th>#</th><th>Mesa</th><th>Cliente</th><th>Estado</th>' +
-      '<th class="num">Total</th><th>Fecha</th>' + (conAcciones ? '<th>Acciones</th>' : '') + '</tr></thead><tbody>';
+    var columnas = [
+      { texto: '#' },
+      { texto: 'Mesa' },
+      { texto: 'Cliente' },
+      { texto: 'Estado' },
+      { texto: 'Total', clase: 'num' },
+      { texto: 'Fecha' },
+    ];
+    if (conAcciones) columnas.push({ texto: 'Acciones' });
 
-    filas.forEach(function (p) {
-      html += '<tr>' +
-        '<td>' + raw(p.id) + '</td>' +
-        '<td>' + raw(p.mesa) + '</td>' +
-        '<td>' + raw(p.cliente) + '</td>' +
-        '<td><span class="badge badge-' + raw(p.estado) + '">' + raw(p.estado) + '</span></td>' +
-        '<td class="num">' + money(p.total) + '</td>' +
-        '<td>' + new Date(p.creado_en).toLocaleString('es-AR') + '</td>' +
-        (conAcciones
-          ? '<td><select data-pedido="' + raw(p.id) + '" class="sel-estado">' +
-            ['abierto', 'preparando', 'listo', 'entregado'].map(function (e) {
-              return '<option value="' + e + '"' + (e === p.estado ? ' selected' : '') + '>' + e + '</option>';
-            }).join('') +
-            '</select></td>'
-          : '') +
-        '</tr>';
+    var trs = filas.map(function (p) {
+      var tr = document.createElement('tr');
+      tr.appendChild(crearEl('td', null, p.id));
+      tr.appendChild(crearEl('td', null, p.mesa));
+      tr.appendChild(crearEl('td', null, p.cliente));
+
+      var tdEstado = document.createElement('td');
+      tdEstado.appendChild(crearEl('span', 'badge badge-' + p.estado, p.estado));
+      tr.appendChild(tdEstado);
+
+      tr.appendChild(crearEl('td', 'num', money(p.total)));
+      tr.appendChild(crearEl('td', null, new Date(p.creado_en).toLocaleString('es-AR')));
+
+      if (conAcciones) {
+        var tdAcc = document.createElement('td');
+        var sel = crearEl('select', 'sel-estado');
+        sel.setAttribute('data-pedido', String(p.id));
+        ['abierto', 'preparando', 'listo', 'entregado'].forEach(function (e) {
+          var opt = crearEl('option', null, e);
+          opt.value = e;
+          if (e === p.estado) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        tdAcc.appendChild(sel);
+        tr.appendChild(tdAcc);
+      }
+      return tr;
     });
 
-    return html + '</tbody>';
+    tabla.appendChild(construirTabla(columnas, trs));
   }
 
   function cargarPedidos() {
     api('/pedidos').then(function (resp) {
       var pedidos = resp.data.pedidos || [];
-      $('#tabla-pedidos').innerHTML = tablaPedidos(pedidos, true);
-      $('#tabla-ultimos').innerHTML = tablaPedidos(pedidos.slice(0, 5), false);
+      renderTablaPedidos($('#tabla-pedidos'), pedidos, true);
+      renderTablaPedidos($('#tabla-ultimos'), pedidos.slice(0, 5), false);
     });
   }
 
@@ -193,22 +241,36 @@
     api('/productos').then(function (resp) {
       var productos = resp.data.productos || [];
       productosCache = {};
-      var html = '<thead><tr><th>#</th><th>Nombre</th><th>Tipo</th><th>Origen</th>' +
-        '<th class="num">Precio</th><th>Acciones</th></tr></thead><tbody>';
+      var tabla = $('#tabla-productos');
+      tabla.replaceChildren();
 
-      productos.forEach(function (p) {
+      var columnas = [
+        { texto: '#' },
+        { texto: 'Nombre' },
+        { texto: 'Tipo' },
+        { texto: 'Origen' },
+        { texto: 'Precio', clase: 'num' },
+        { texto: 'Acciones' },
+      ];
+
+      var trs = productos.map(function (p) {
         productosCache[p.id] = p;
-        html += '<tr>' +
-          '<td>' + raw(p.id) + '</td>' +
-          '<td>' + raw(p.nombre) + '</td>' +
-          '<td>' + raw(p.tipo) + '</td>' +
-          '<td>' + raw(p.variedad || '—') + '</td>' +
-          '<td class="num">' + money(p.precio) + '</td>' +
-          '<td><button class="link-danger" data-borrar="' + raw(p.id) + '">Borrar</button></td>' +
-          '</tr>';
+        var tr = document.createElement('tr');
+        tr.appendChild(crearEl('td', null, p.id));
+        tr.appendChild(crearEl('td', null, p.nombre));
+        tr.appendChild(crearEl('td', null, p.tipo));
+        tr.appendChild(crearEl('td', null, p.variedad || '—'));
+        tr.appendChild(crearEl('td', 'num', money(p.precio)));
+
+        var tdAcc = document.createElement('td');
+        var btn = crearEl('button', 'link-danger', 'Borrar');
+        btn.setAttribute('data-borrar', String(p.id));
+        tdAcc.appendChild(btn);
+        tr.appendChild(tdAcc);
+        return tr;
       });
 
-      $('#tabla-productos').innerHTML = html + '</tbody>';
+      tabla.appendChild(construirTabla(columnas, trs));
     });
   }
 
@@ -248,7 +310,7 @@
     var id = btn.getAttribute('data-borrar');
     if (!confirm('¿Borrar el producto #' + id + '?')) return;
 
-    api('/admin/productos/' + id, { method: 'DELETE' }).then(function (resp) {
+    deleteJSON('/admin/productos/' + id).then(function (resp) {
       if (!resp.ok) alert('No se pudo borrar: ' + (resp.data.error || 'error'));
       cargarProductos();
     });
@@ -299,12 +361,9 @@
             { label: 'Facturación', value: money(f.data.facturado) },
             { label: 'Pedidos', value: f.data.pedidos },
             { label: 'Ticket promedio', value: money(t.data.promedio) },
-            { label: 'Más vendido', value: mas ? raw(mas.nombre) + ' (' + raw(mas.unidades) + ')' : '—' },
+            { label: 'Más vendido', value: mas ? mas.nombre + ' (' + mas.unidades + ')' : '—' },
           ];
-          $('#kpis-reportes').innerHTML = kpis.map(function (k) {
-            return '<div class="kpi"><div class="kpi-label">' + raw(k.label) + '</div>' +
-              '<div class="kpi-value">' + raw(k.value) + '</div></div>';
-          }).join('');
+          renderKpis($('#kpis-reportes'), kpis);
         });
       });
     });
@@ -313,21 +372,34 @@
   function consultarVentas() {
     var caja = $('#reporte-feedback');
     var variedad = $('#reporte-variedad').value;
+    var tabla = $('#tabla-ventas');
 
     api('/reportes/ventas-por-variedad?variedad=' + encodeURIComponent(variedad)).then(function (resp) {
       if (!resp.ok) {
         feedback(caja, 'Error: ' + (resp.data.error || 'desconocido'), false);
-        $('#tabla-ventas').innerHTML = '';
+        tabla.replaceChildren();
         return;
       }
       var ventas = resp.data.ventas || [];
-      var html = '<thead><tr><th>Origen</th><th>Producto</th><th class="num">Unidades</th>' +
-        '<th class="num">Total</th></tr></thead><tbody>';
-      ventas.forEach(function (v) {
-        html += '<tr><td>' + raw(v.variedad) + '</td><td>' + raw(v.nombre) + '</td>' +
-          '<td class="num">' + raw(v.unidades) + '</td><td class="num">' + money(v.total) + '</td></tr>';
+      tabla.replaceChildren();
+
+      var columnas = [
+        { texto: 'Origen' },
+        { texto: 'Producto' },
+        { texto: 'Unidades', clase: 'num' },
+        { texto: 'Total', clase: 'num' },
+      ];
+
+      var trs = ventas.map(function (v) {
+        var tr = document.createElement('tr');
+        tr.appendChild(crearEl('td', null, v.variedad));
+        tr.appendChild(crearEl('td', null, v.nombre));
+        tr.appendChild(crearEl('td', 'num', v.unidades));
+        tr.appendChild(crearEl('td', 'num', money(v.total)));
+        return tr;
       });
-      $('#tabla-ventas').innerHTML = html + '</tbody>';
+
+      tabla.appendChild(construirTabla(columnas, trs));
       feedback(caja, 'Consulta realizada.', true);
     });
   }
@@ -336,21 +408,42 @@
   function cargarUsuarios() {
     api('/admin/usuarios').then(function (resp) {
       var usuarios = resp.data.usuarios || [];
-      var html = '<thead><tr><th>#</th><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Acciones</th></tr></thead><tbody>';
-      usuarios.forEach(function (u) {
-        html += '<tr>' +
-          '<td>' + raw(u.id) + '</td>' +
-          '<td>' + raw(u.username) + '</td>' +
-          '<td>' + raw(u.nombre) + '</td>' +
-          '<td><span class="badge' + (u.rol === 'admin' ? ' badge-admin' : '') + '">' + raw(u.rol) + '</span></td>' +
-          '<td><select data-usuario="' + raw(u.id) + '" class="sel-rol">' +
-            ['cliente', 'mozo', 'barista', 'admin'].map(function (r) {
-              return '<option value="' + r + '"' + (r === u.rol ? ' selected' : '') + '>' + r + '</option>';
-            }).join('') +
-            '</select></td>' +
-          '</tr>';
+      var tabla = $('#tabla-usuarios');
+      tabla.replaceChildren();
+
+      var columnas = [
+        { texto: '#' },
+        { texto: 'Usuario' },
+        { texto: 'Nombre' },
+        { texto: 'Rol' },
+        { texto: 'Acciones' },
+      ];
+
+      var trs = usuarios.map(function (u) {
+        var tr = document.createElement('tr');
+        tr.appendChild(crearEl('td', null, u.id));
+        tr.appendChild(crearEl('td', null, u.username));
+        tr.appendChild(crearEl('td', null, u.nombre));
+
+        var tdRol = document.createElement('td');
+        tdRol.appendChild(crearEl('span', 'badge' + (u.rol === 'admin' ? ' badge-admin' : ''), u.rol));
+        tr.appendChild(tdRol);
+
+        var tdAcc = document.createElement('td');
+        var sel = crearEl('select', 'sel-rol');
+        sel.setAttribute('data-usuario', String(u.id));
+        ['cliente', 'mozo', 'barista', 'admin'].forEach(function (r) {
+          var opt = crearEl('option', null, r);
+          opt.value = r;
+          if (r === u.rol) opt.selected = true;
+          sel.appendChild(opt);
+        });
+        tdAcc.appendChild(sel);
+        tr.appendChild(tdAcc);
+        return tr;
       });
-      $('#tabla-usuarios').innerHTML = html + '</tbody>';
+
+      tabla.appendChild(construirTabla(columnas, trs));
     });
   }
 
@@ -418,13 +511,12 @@
 
   /* ------------------------------------------------------------------ init */
   function init() {
-    // FALLA (XSS de DOM): se lee un parámetro de la URL y se inyecta con
-    // innerHTML. Al abrir admin.html?vista=<script>...</script> se ejecuta
-    // código en el navegador del admin.
+    obtenerCsrf();
+
     var params = new URLSearchParams(window.location.search);
     var objetivo = params.get('vista');
     if (objetivo) {
-      $('#panel-bienvenida').innerHTML = 'Panel ' + objetivo;
+      $('#panel-bienvenida').textContent = 'Panel ' + objetivo;
     }
 
     $('#form-login').addEventListener('submit', iniciarSesion);
