@@ -22,7 +22,7 @@ interface UsuarioInicial {
 export const USUARIOS_INICIALES: UsuarioInicial[] = [
   {
     username: 'admin',
-    password: 'admin',
+    password: process.env.ADMIN_PASSWORD || 'Admin#Origen2026!',
     rol: 'admin',
     nombre: 'Administración',
   },
@@ -34,19 +34,19 @@ export const USUARIOS_INICIALES: UsuarioInicial[] = [
   },
   {
     username: 'barista',
-    password: 'cafe123',
+    password: process.env.BARISTA_PASSWORD || 'Barista#Origen2026!',
     rol: 'barista',
     nombre: 'Barista',
   },
   {
     username: 'mozo',
-    password: 'mozo123',
+    password: process.env.MOZO_PASSWORD || 'Mozo#Origen2026!',
     rol: 'mozo',
     nombre: 'Mozo de sala',
   },
   {
     username: 'cliente',
-    password: 'cliente',
+    password: process.env.CLIENTE_PASSWORD || 'Cliente#Origen2026!',
     rol: 'cliente',
     nombre: 'Cliente',
   },

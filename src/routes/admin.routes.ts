@@ -60,9 +60,30 @@ router.use(requiereSesion);
 router.use(requiereRol('admin'));
 
 /** GET /api/admin/usuarios */
-router.get('/usuarios', async (req, res, next) => {
+router.put('/usuarios/:id', async (req, res, next) => {
   try {
-    res.json({ usuarios: await usuarios.listar() });
+    const { username, nombre, rol, password } = req.body || {};
+    const cambios: Partial<Usuario> = {};
+    if (username !== undefined) cambios.username = username;
+    if (nombre !== undefined) cambios.nombre = nombre;
+    if (rol !== undefined) {
+      if (!req.usuario || req.usuario.rol !== 'admin') {
+        return res
+          .status(403)
+          .json({ error: 'Solo un administrador puede cambiar roles.' });
+      }
+      if (!ROLES_PERMITIDOS.includes(rol)) {
+        return res.status(400).json({ error: 'Rol no válido.' });
+      }
+      cambios.rol = rol;
+    }
+    if (password !== undefined) cambios.password = password;
+
+    const usuario = await usuarios.actualizar(req.params.id, cambios);
+    if (!usuario) {
+      return res.status(404).json({ error: 'Usuario no encontrado.' });
+    }
+    res.json(usuario);
   } catch (err) {
     next(err);
   }
