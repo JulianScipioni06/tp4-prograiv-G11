@@ -151,23 +151,24 @@
 
   /* --------------------------------------------------------------- carrito */
   function agregarAlCarrito(productoId) {
+    var idNum = Number(productoId);
     var existente = null;
     for (var i = 0; i < estado.carrito.length; i++) {
-      if (String(estado.carrito[i].id) === String(productoId)) existente = estado.carrito[i];
+      if (Number(estado.carrito[i].id) === idNum) existente = estado.carrito[i];
     }
     if (existente) {
       existente.cantidad += 1;
     } else {
       estado.carrito.push({
-        id: productoId,
-        nombre: window.__productos[productoId] ? window.__productos[productoId].nombre : 'Producto',
-        precio: window.__productos[productoId] ? window.__productos[productoId].precio : 0,
+        id: idNum,
+        nombre: window.__productos[idNum] ? window.__productos[idNum].nombre : 'Producto',
+        precio: window.__productos[idNum] ? window.__productos[idNum].precio : 0,
         cantidad: 1,
       });
     }
     guardarCarrito();
     renderCarrito();
-  }
+}
 
   function cambiarCantidad(indice, delta) {
     var item = estado.carrito[indice];
@@ -258,7 +259,7 @@
       mesa: $('#pedido-mesa').value,
       cliente: $('#pedido-cliente').value,
       items: estado.carrito.map(function (item) {
-        return { productoId: item.id, cantidad: item.cantidad };
+        return { productoId: Number(item.id), cantidad: Number(item.cantidad) };
       }),
     }).then(function (resp) {
       if (!resp.ok) {
