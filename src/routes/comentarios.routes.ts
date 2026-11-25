@@ -23,8 +23,18 @@ router.get('/', async (_req, res, next) => {
 router.post('/', async (req, res, next) => {
   try {
     const body = req.body || {};
-    const autorValido = texto(body.autor, 2, 40, 'autor');
-    const textoValido = texto(body.texto, 3, 280, 'texto');
+    const autorLimpio = typeof body.autor === 'string' ? body.autor.trim() : '';
+    const textoLimpio = typeof body.texto === 'string' ? body.texto.trim() : '';
+
+    if (autorLimpio.length < 2 || autorLimpio.length > 40) {
+      return res.status(400).json({ error: 'El autor debe tener entre 2 y 40 caracteres.' });
+    }
+    if (textoLimpio.length < 3 || textoLimpio.length > 280) {
+      return res.status(400).json({ error: 'La reseña debe tener entre 3 y 280 caracteres.' });
+    }
+
+    const autorValido = texto(autorLimpio, 2, 40, 'autor');
+    const textoValido = texto(textoLimpio, 3, 280, 'texto');
     const calificacionValida = entero(body.calificacion, 1, 5, 'calificacion');
 
     const comentario = await comentarios.crear({

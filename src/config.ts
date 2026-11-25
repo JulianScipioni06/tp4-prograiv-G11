@@ -33,7 +33,7 @@ export default {
   // FALLA: credenciales por defecto que nunca se cambian.
   credencialesPorDefecto: {
     username: 'admin',
-    password: 'admin',
+    password: process.env.ADMIN_PASSWORD || 'Admin#Origen2026!',
   },
 
   uploadsDir: process.env.UPLOADS_DIR || path.join(__dirname, '..', 'uploads'),
