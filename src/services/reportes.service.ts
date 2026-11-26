@@ -79,15 +79,19 @@ export async function ventasPorVariedad(variedad: string): Promise<VentaPorVarie
   // El HAVING está al final a propósito: es donde un payload UNION clásico
   // ("Brasil' UNION SELECT username, password, 1, 1 FROM usuarios--") cierra la
   // consulta original y agrega la segunda, que lee otra tabla.
+  const ORIGENES_PERMITIDOS = ['Brasil', 'Colombia', 'Etiopia'];
+  if(!ORIGENES_PERMITIDOS.includes(variedad)){
+    throw Object.assign(new Error('Origen no valido'),{ status: 400});
+  }
   const sql = `
     SELECT pr.variedad, pr.nombre, SUM(pi.cantidad) AS unidades,
            SUM(pi.cantidad * pi.precio_unitario) AS total
       FROM pedido_items pi
       JOIN productos pr ON pr.id = pi.producto_id
      GROUP BY pr.variedad, pr.nombre
-    HAVING pr.variedad = '${variedad}'`;
+    HAVING pr.variedad = $1`;
 
-  const { rows } = await db.query<VentaPorVariedad>(sql);
+  const { rows } = await db.query(sql, [variedad]);
   return rows;
 }
 

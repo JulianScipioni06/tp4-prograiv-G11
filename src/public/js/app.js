@@ -6,6 +6,7 @@
 
   var API = '/api';
   var CARRITO_KEY = 'origen.carrito';
+  var csrfToken = null;
 
   var estado = {
     tipo: '',
@@ -22,11 +23,11 @@
     return n.toLocaleString('es-AR', { style: 'currency', currency: 'ARS' });
   }
 
-  function raw(valor) {
-    // FALLA: esta función NO escapa nada, devuelve el valor tal cual.
-    // La forma correcta de renderizar texto del servidor es escaparHtml()
-    // (o textContent en vez de innerHTML).
-    return String(valor == null ? '' : valor);
+  function crearEl(tag, clase, texto) {
+    var el = document.createElement(tag);
+    if (clase) el.className = clase;
+    if (texto !== undefined && texto !== null) el.textContent = String(texto);
+    return el;
   }
 
   function api(url, opciones) {
@@ -37,11 +38,25 @@
     });
   }
 
+  function obtenerCsrf() {
+    if (csrfToken) return Promise.resolve(csrfToken);
+    return api('/csrf-token').then(function (resp) {
+      if (resp.ok && resp.data && resp.data.token) {
+        csrfToken = resp.data.token;
+      }
+      return csrfToken;
+    });
+  }
+
   function postJSON(url, cuerpo) {
-    return api(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(cuerpo || {}),
+    return obtenerCsrf().then(function (token) {
+      var headers = { 'Content-Type': 'application/json' };
+      if (token) headers['X-CSRF-Token'] = token;
+      return api(url, {
+        method: 'POST',
+        headers: headers,
+        body: JSON.stringify(cuerpo || {}),
+      });
     });
   }
 
@@ -57,12 +72,6 @@
     } catch (e) {
       return [];
     }
-  }
-
-  function escaparHtml(texto) {
-    var div = document.createElement('div');
-    div.textContent = texto == null ? '' : String(texto);
-    return div.innerHTML;
   }
 
   /* ------------------------------------------------------------- catálogo */
@@ -88,74 +97,78 @@
 
   function renderProductos(productos) {
     var grid = $('#productos-grid');
+    grid.replaceChildren();
 
     if (!productos || productos.length === 0) {
-      grid.innerHTML = '<p class="empty">No encontramos productos con esos filtros.</p>';
+      grid.appendChild(crearEl('p', 'empty', 'No encontramos productos con esos filtros.'));
       return;
     }
 
-    // ---------------------------------------------------------------
-    // FALLA (XSS reflejado / almacenado): el HTML se construye con
-    // innerHTML a partir de datos que vienen del servidor (nombres de
-    // producto y texto de la búsqueda). Un "<script>" en el buscador o
-    // en el nombre de un producto se ejecuta en el navegador.
-    //
-    // Corrección: usar textContent, o escapar los valores antes de
-    // interpolarlos (ver la función escaparHtml de arriba).
-    // ---------------------------------------------------------------
-    grid.innerHTML = productos.map(function (p) {
+    productos.forEach(function (p) {
       window.__productos[p.id] = p;
-      var tags = '<span class="tag">' + raw(p.tipo) + '</span>';
-      if (p.variedad) tags += '<span class="tag tag-origen">' + raw(p.variedad) + '</span>';
-      if (p.tamano) tags += '<span class="tag">' + raw(p.tamano) + '</span>';
 
-      return '' +
-        '<article class="product-card">' +
-        '  <div class="product-top">' +
-        '    <h3 class="product-name">' + raw(p.nombre) + '</h3>' +
-        '    <span class="product-price">' + money(p.precio) + '</span>' +
-        '  </div>' +
-        '  <div class="product-tags">' + tags + '</div>' +
-        '  <p class="product-desc">' + raw(p.descripcion) + '</p>' +
-        '  <button class="btn btn-ghost btn-agregar" data-id="' + raw(p.id) + '">Agregar</button>' +
-        '</article>';
-    }).join('');
+      var card = crearEl('article', 'product-card');
+
+      var top = crearEl('div', 'product-top');
+      top.appendChild(crearEl('h3', 'product-name', p.nombre));
+      top.appendChild(crearEl('span', 'product-price', money(p.precio)));
+      card.appendChild(top);
+
+      var tags = crearEl('div', 'product-tags');
+      tags.appendChild(crearEl('span', 'tag', p.tipo));
+      if (p.variedad) tags.appendChild(crearEl('span', 'tag tag-origen', p.variedad));
+      if (p.tamano) tags.appendChild(crearEl('span', 'tag', p.tamano));
+      card.appendChild(tags);
+
+      card.appendChild(crearEl('p', 'product-desc', p.descripcion));
+
+      var btn = crearEl('button', 'btn btn-ghost btn-agregar', 'Agregar');
+      btn.setAttribute('data-id', String(p.id));
+      card.appendChild(btn);
+
+      grid.appendChild(card);
+    });
   }
 
   function renderResultado(filtros, total) {
     var el = $('#resultado-busqueda');
+    el.replaceChildren();
 
-    // FALLA (XSS reflejado): se interpola el texto buscado con innerHTML.
     if (filtros && filtros.q) {
-      el.innerHTML = 'Resultados para <strong>' + filtros.q + '</strong> — ' + total + ' producto(s)';
+      el.appendChild(document.createTextNode('Resultados para '));
+      el.appendChild(crearEl('strong', null, filtros.q));
+      el.appendChild(document.createTextNode(' — ' + total + ' producto(s)'));
     } else {
       el.textContent = total + ' producto(s) en el menú';
     }
   }
 
   function renderErrorProductos(mensaje) {
-    $('#productos-grid').innerHTML = '<p class="empty">No se pudo cargar el menú: ' + (mensaje || 'error desconocido') + '</p>';
+    var grid = $('#productos-grid');
+    grid.replaceChildren();
+    grid.appendChild(crearEl('p', 'empty', 'No se pudo cargar el menú: ' + (mensaje || 'error desconocido')));
   }
 
   /* --------------------------------------------------------------- carrito */
   function agregarAlCarrito(productoId) {
+    var idNum = Number(productoId);
     var existente = null;
     for (var i = 0; i < estado.carrito.length; i++) {
-      if (String(estado.carrito[i].id) === String(productoId)) existente = estado.carrito[i];
+      if (Number(estado.carrito[i].id) === idNum) existente = estado.carrito[i];
     }
     if (existente) {
       existente.cantidad += 1;
     } else {
       estado.carrito.push({
-        id: productoId,
-        nombre: window.__productos[productoId] ? window.__productos[productoId].nombre : 'Producto',
-        precio: window.__productos[productoId] ? window.__productos[productoId].precio : 0,
+        id: idNum,
+        nombre: window.__productos[idNum] ? window.__productos[idNum].nombre : 'Producto',
+        precio: window.__productos[idNum] ? window.__productos[idNum].precio : 0,
         cantidad: 1,
       });
     }
     guardarCarrito();
     renderCarrito();
-  }
+}
 
   function cambiarCantidad(indice, delta) {
     var item = estado.carrito[indice];
@@ -177,38 +190,60 @@
     var lista = $('#resumen-carrito');
     var total = 0;
 
+    cont.replaceChildren();
+    lista.replaceChildren();
+
     if (estado.carrito.length === 0) {
-      cont.innerHTML = '<p class="empty">El carrito está vacío.</p>';
-      lista.innerHTML = '';
+      cont.appendChild(crearEl('p', 'empty', 'El carrito está vacío.'));
       $('#resumen-total').textContent = money(0);
       return;
     }
 
-    cont.innerHTML = estado.carrito.map(function (item, i) {
+    estado.carrito.forEach(function (item, i) {
       var subtotal = item.precio * item.cantidad;
       total += subtotal;
-      return '' +
-        '<div class="cart-item">' +
-        '  <div>' +
-        '    <div class="cart-item-name">' + raw(item.nombre) + '</div>' +
-        '    <div class="cart-item-meta">' + money(item.precio) + ' c/u</div>' +
-        '  </div>' +
-        '  <div class="qty-control">' +
-        '    <button type="button" data-acc="menos" data-i="' + i + '">&minus;</button>' +
-        '    <span>' + item.cantidad + '</span>' +
-        '    <button type="button" data-acc="mas" data-i="' + i + '">+</button>' +
-        '  </div>' +
-        '  <div>' +
-        '    <div class="cart-item-price">' + money(subtotal) + '</div>' +
-        '    <button type="button" class="link-danger" data-acc="quitar" data-i="' + i + '">Quitar</button>' +
-        '  </div>' +
-        '</div>';
-    }).join('');
 
-    lista.innerHTML = estado.carrito.map(function (item) {
-      return '<li><span>' + raw(item.nombre) + ' × ' + item.cantidad + '</span><span>' +
-        money(item.precio * item.cantidad) + '</span></li>';
-    }).join('');
+      var row = crearEl('div', 'cart-item');
+
+      var info = document.createElement('div');
+      info.appendChild(crearEl('div', 'cart-item-name', item.nombre));
+      info.appendChild(crearEl('div', 'cart-item-meta', money(item.precio) + ' c/u'));
+      row.appendChild(info);
+
+      var qty = crearEl('div', 'qty-control');
+      var btnMenos = crearEl('button', null, '−');
+      btnMenos.type = 'button';
+      btnMenos.setAttribute('data-acc', 'menos');
+      btnMenos.setAttribute('data-i', String(i));
+
+      var spanCant = crearEl('span', null, item.cantidad);
+
+      var btnMas = crearEl('button', null, '+');
+      btnMas.type = 'button';
+      btnMas.setAttribute('data-acc', 'mas');
+      btnMas.setAttribute('data-i', String(i));
+
+      qty.appendChild(btnMenos);
+      qty.appendChild(spanCant);
+      qty.appendChild(btnMas);
+      row.appendChild(qty);
+
+      var colPrecio = document.createElement('div');
+      colPrecio.appendChild(crearEl('div', 'cart-item-price', money(subtotal)));
+      var btnQuitar = crearEl('button', 'link-danger', 'Quitar');
+      btnQuitar.type = 'button';
+      btnQuitar.setAttribute('data-acc', 'quitar');
+      btnQuitar.setAttribute('data-i', String(i));
+      colPrecio.appendChild(btnQuitar);
+      row.appendChild(colPrecio);
+
+      cont.appendChild(row);
+
+      var li = document.createElement('li');
+      li.appendChild(crearEl('span', null, item.nombre + ' × ' + item.cantidad));
+      li.appendChild(crearEl('span', null, money(subtotal)));
+      lista.appendChild(li);
+    });
 
     $('#resumen-total').textContent = money(total);
   }
@@ -224,13 +259,12 @@
       mesa: $('#pedido-mesa').value,
       cliente: $('#pedido-cliente').value,
       items: estado.carrito.map(function (item) {
-        return { productoId: item.id, cantidad: item.cantidad };
+        return { productoId: Number(item.id), cantidad: Number(item.cantidad) };
       }),
     }).then(function (resp) {
       if (!resp.ok) {
-        // FALLA (XSS reflejado): el mensaje del servidor se pinta con innerHTML.
         feedback.className = 'form-feedback is-error';
-        feedback.innerHTML = 'No pudimos enviar el pedido: ' + (resp.data.error || 'error desconocido');
+        feedback.textContent = 'No pudimos enviar el pedido: ' + (resp.data.error || 'error desconocido');
         return;
       }
       feedback.className = 'form-feedback is-ok';
@@ -250,25 +284,25 @@
   function cargarReseñas() {
     return api('/comentarios').then(function (resp) {
       var cont = $('#lista-resenas');
+      cont.replaceChildren();
+
       if (!resp.ok || !resp.data.comentarios || resp.data.comentarios.length === 0) {
-        cont.innerHTML = '<p class="empty">Todavía no hay reseñas. ¡Sé el primero!</p>';
+        cont.appendChild(crearEl('p', 'empty', 'Todavía no hay reseñas. ¡Sé el primero!'));
         return;
       }
-      // FALLA (XSS almacenado): el texto de la reseña viene de la base y se
-      // inyecta con innerHTML → se ejecuta en el navegador de cada visitante.
-      cont.innerHTML = resp.data.comentarios.map(function (c) {
+
+      resp.data.comentarios.forEach(function (c) {
         var estrellas = '';
-        var i;
-        for (i = 0; i < Number(c.calificacion || 0); i++) estrellas += '★';
-        return '' +
-          '<article class="review">' +
-          '  <div class="review-head">' +
-          '    <span class="review-author">' + raw(c.autor) + '</span>' +
-          '    <span class="review-stars">' + estrellas + '</span>' +
-          '  </div>' +
-          '  <p class="review-text">' + raw(c.texto) + '</p>' +
-          '</article>';
-      }).join('');
+        for (var i = 0; i < Number(c.calificacion || 0); i++) estrellas += '★';
+
+        var art = crearEl('article', 'review');
+        var head = crearEl('div', 'review-head');
+        head.appendChild(crearEl('span', 'review-author', c.autor));
+        head.appendChild(crearEl('span', 'review-stars', estrellas));
+        art.appendChild(head);
+        art.appendChild(crearEl('p', 'review-text', c.texto));
+        cont.appendChild(art);
+      });
     });
   }
 
@@ -285,7 +319,7 @@
     }).then(function (resp) {
       if (!resp.ok) {
         feedback.className = 'form-feedback is-error';
-        feedback.innerHTML = 'No se pudo publicar: ' + (resp.data.error || 'error desconocido');
+        feedback.textContent = 'No se pudo publicar: ' + (resp.data.error || 'error desconocido');
         return;
       }
       feedback.className = 'form-feedback is-ok';
@@ -298,6 +332,7 @@
   /* ------------------------------------------------------------- listeners */
   function init() {
     window.__productos = {};
+    obtenerCsrf();
 
     // Filtros
     document.querySelectorAll('.chip').forEach(function (chip) {

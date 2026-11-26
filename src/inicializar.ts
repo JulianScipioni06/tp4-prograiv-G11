@@ -1,3 +1,4 @@
+import * as bcrypt from 'bcryptjs';
 import * as db from './db';
 import { CATALOGO } from './catalogo';
 import type { Rol } from './tipos';
@@ -21,7 +22,7 @@ interface UsuarioInicial {
 export const USUARIOS_INICIALES: UsuarioInicial[] = [
   {
     username: 'admin',
-    password: 'admin',
+    password: process.env.ADMIN_PASSWORD || 'Admin#Origen2026!',
     rol: 'admin',
     nombre: 'Administración',
   },
@@ -33,19 +34,19 @@ export const USUARIOS_INICIALES: UsuarioInicial[] = [
   },
   {
     username: 'barista',
-    password: 'cafe123',
+    password: process.env.BARISTA_PASSWORD || 'Barista#Origen2026!',
     rol: 'barista',
     nombre: 'Barista',
   },
   {
     username: 'mozo',
-    password: 'mozo123',
+    password: process.env.MOZO_PASSWORD || 'Mozo#Origen2026!',
     rol: 'mozo',
     nombre: 'Mozo de sala',
   },
   {
     username: 'cliente',
-    password: 'cliente',
+    password: process.env.CLIENTE_PASSWORD || 'Cliente#Origen2026!',
     rol: 'cliente',
     nombre: 'Cliente',
   },
@@ -54,22 +55,21 @@ export const USUARIOS_INICIALES: UsuarioInicial[] = [
 export async function inicializarBase(): Promise<void> {
   // --- Usuarios -------------------------------------------------------------
   for (const usuario of USUARIOS_INICIALES) {
-    // FALLA: la contraseña se guarda tal cual, sin hash ni salt.
+    const hash = await bcrypt.hash(usuario.password, 10);
     await db.query(
       `INSERT INTO usuarios (username, password, rol, nombre)
-       VALUES ($1, $2, $3, $4)
-       ON CONFLICT (username) DO NOTHING`,
-      [usuario.username, usuario.password, usuario.rol, usuario.nombre]
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (username) DO NOTHING`,
+      [usuario.username, hash, usuario.rol, usuario.nombre]
     );
   }
 
   // --- Catálogo -------------------------------------------------------------
   for (const producto of CATALOGO) {
     await db.query(
-      `INSERT INTO productos
-         (nombre, tipo, variedad, tamano, gramos, precio_base, precio_por_gramo, descripcion)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       ON CONFLICT (nombre) DO NOTHING`,
+      `INSERT INTO productos (nombre, tipo, variedad, tamano, gramos, precio_base, precio_por_gramo, descripcion)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (nombre) DO NOTHING`,
       [
         producto.nombre,
         producto.tipo,
